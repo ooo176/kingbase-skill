@@ -1,16 +1,43 @@
 # kingbase-skill
 
-面向 **人大金仓 KingbaseES** 数据库的 **Cursor / Agent Skill**：在对话中通过校验后的 **只读 SQL** 探查数据与元数据，**不支持**插入、更新、删除或 DDL。
+<p align="center">
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.9+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.9+"></a>
+  <img src="https://img.shields.io/badge/KingbaseES-人大金仓-C41E3A?style=flat-square" alt="KingbaseES">
+  <img src="https://img.shields.io/badge/SQL-只读-2ea043?style=flat-square" alt="Read-only SQL">
+  <img src="https://img.shields.io/badge/Agent-Qoder%20%7C%20Cursor%20%7C%20Claude-6f42c1?style=flat-square" alt="Qoder Cursor Claude">
+</p>
 
-## 功能
+<p align="center"><strong>人大金仓 KingbaseES · 只读 SQL Agent Skill</strong><br>
+在 <strong>Qoder</strong>、<strong>Cursor</strong>、<strong>Claude Code</strong> 中通过校验后的只读 SQL 探查数据与元数据（不支持写入与 DDL）</p>
 
-- 自定义 **SELECT / WITH / EXPLAIN / SHOW / DESC / DESCRIBE** 类查询（具体支持度与数据库 **兼容模式** 一致）
-- 脚本层 **关键字与首词校验**，拦截 `INSERT`、`UPDATE`、`DELETE`、`MERGE`、DDL、`CALL`/`EXEC` 等
-- 查询结果以 **JSON** 输出，便于 Agent 解析与汇总
-- 默认限制返回行数，降低大结果集风险
-- 支持 **psycopg2-binary**（pip）与 **ksycopg2**（金仓官方，随安装包）
+---
+
+### 目录
+
+- [核心能力](#核心能力)
+- [仓库结构](#仓库结构)
+- [环境与驱动](#环境与驱动)
+- [连接配置](#连接配置)
+- [命令行](#命令行)
+- [安装 Skill](#安装-skill)（Qoder · Cursor · Claude Code）
+- [SQL 与安全](#sql-与安全)
+- [延伸阅读](#延伸阅读)
+
+---
+
+## 核心能力
+
+- **自定义查询**：`SELECT` / `WITH` / `EXPLAIN` / `SHOW` / `DESC` / `DESCRIBE`（具体以当前库**兼容模式**为准）
+- **脚本校验**：拦截 `INSERT`、`UPDATE`、`DELETE`、`MERGE`、DDL、`CALL` / `EXEC` 等
+- **JSON 输出**：便于 Agent 解析与汇总
+- **行数上限**：默认限制返回行数，降低大结果集风险
+- **双驱动**：`psycopg2-binary`（pip）或 **ksycopg2**（金仓安装包）
+
+---
 
 ## 仓库结构
+
+本仓库**根目录**即 Skill 根目录：`SKILL.md` 与 `scripts/` **必须同级**，Agent 才能正确调用脚本。
 
 ```
 kingbase-skill/
@@ -18,25 +45,43 @@ kingbase-skill/
 ├── reference.md          # 退出码、JSON 字段、校验说明
 ├── README.md             # 本文件
 ├── requirements.txt      # Python 依赖（默认 psycopg2-binary）
+├── .env/                 # 本地私密配置（已 .gitignore）
+│   └── env.sh            # 填写后: source .env/env.sh
 └── scripts/
     └── kingbase_query.py # 只读查询 CLI
 ```
 
-## 环境要求
+---
 
-- Python 3.9+（建议与运行 Agent 终端一致）
-- **psycopg2-binary**（`pip install -r requirements.txt`），或从金仓介质安装 **ksycopg2** 并配置 `LD_LIBRARY_PATH`（Linux）
+## 环境与驱动
 
-### 驱动选择
+**要求**
 
-- **`KB_DRIVER=auto`（默认）**：优先加载 `ksycopg2`，失败则使用 `psycopg2`。
-- 仅 pip、无金仓客户端机器：可设 `export KB_DRIVER=psycopg2`（Linux/macOS）；Windows PowerShell 为 `$env:KB_DRIVER = "psycopg2"`，CMD 为 `set KB_DRIVER=psycopg2`。
+- Python **3.9+**（建议与运行 Agent 的终端一致）
+- `pip install -r requirements.txt` → **psycopg2-binary**；或使用介质中的 **ksycopg2**（Linux 常需配置 `LD_LIBRARY_PATH`）
+
+**`KB_DRIVER`**
+
+| 取值 | 行为 |
+|------|------|
+| `auto`（默认） | 先试 `ksycopg2`，失败再用 `psycopg2` |
+| `psycopg2` | 仅用 pip 驱动 |
+| `ksycopg2` | 仅用官方驱动 |
+
+```bash
+export KB_DRIVER=psycopg2   # Linux / macOS / Git Bash
+```
+
+- **PowerShell**：`$env:KB_DRIVER = "psycopg2"`
+- **CMD**：`set KB_DRIVER=psycopg2`
+
+---
 
 ## 连接配置
 
-在运行脚本的 shell 中配置（**勿**把密码写入仓库或提交 Git）。
+> **请勿**把密码写入仓库或提交 Git。可使用仓库内 **`.env/env.sh`**（已忽略版本控制）：填好后在仓库根目录执行 `source .env/env.sh`。
 
-**分项变量：**
+### Bash / zsh
 
 ```bash
 export KB_USER="SYSTEM"
@@ -50,17 +95,15 @@ export KB_MAX_ROWS="500"
 export KB_DRIVER="auto"
 ```
 
-**关于 `KB_SCHEMA`：** 脚本在连上库后会执行 `SET search_path TO <值>`，只影响**未写模式前缀**的对象名解析（例如 `SELECT * FROM foo` 会解析为 `nj.foo`）。**不会**自动限制 `information_schema`、`pg_catalog` 等系统视图里的结果；查「有哪些表」时仍需在 SQL 里写 `WHERE table_schema = 'nj'`（或你需要的模式名）。
+**`KB_SCHEMA` 说明**：连库后会执行 `SET search_path TO <值>`，只影响**未带模式前缀**的对象名。查「某模式下有哪些表」时，仍需在 SQL 里写 `WHERE table_schema = '你的模式名'`（`information_schema` / `pg_catalog` 不受 `search_path` 限制）。
 
-**或 URI：**
+### URI（可选）
 
 ```bash
 export KB_URI="postgresql://SYSTEM:pass@127.0.0.1:54321/TEST"
 ```
 
-**Windows（当前终端会话）**
-
-在 **PowerShell** 中（推荐，与 Cursor 默认终端一致）：
+### Windows · PowerShell
 
 ```powershell
 $env:KB_USER = "SYSTEM"
@@ -68,15 +111,13 @@ $env:KB_PASSWORD = "你的密码"
 $env:KB_HOST = "127.0.0.1"
 $env:KB_PORT = "54321"
 $env:KB_DATABASE = "TEST"
-# 可选
-$env:KB_SCHEMA = "public"
-$env:KB_MAX_ROWS = "500"
-$env:KB_DRIVER = "auto"
-# 或 URI
-$env:KB_URI = "postgresql://SYSTEM:pass@127.0.0.1:54321/TEST"
+$env:KB_SCHEMA = "public"      # 可选
+$env:KB_MAX_ROWS = "500"       # 可选
+$env:KB_DRIVER = "auto"        # 可选
+$env:KB_URI = "postgresql://..."  # 可选，与分项二选一
 ```
 
-在 **CMD** 中：
+### Windows · CMD
 
 ```cmd
 set KB_USER=SYSTEM
@@ -87,88 +128,129 @@ set KB_DATABASE=TEST
 set KB_URI=postgresql://SYSTEM:pass@127.0.0.1:54321/TEST
 ```
 
-说明：上述写法只对 **当前窗口** 生效；关闭终端后需重新设置。若需长期生效，可在「系统属性 → 高级 → 环境变量」里添加用户变量，或在 PowerShell 中执行  
-`[Environment]::SetEnvironmentVariable("KB_USER", "SYSTEM", "User")`（其余变量同理，第三个参数 `"User"` 表示当前用户）。
+环境变量默认仅对**当前终端**生效；长期保存可用系统「环境变量」或 PowerShell 的 `[Environment]::SetEnvironmentVariable(..., "User")`。
 
-生产环境建议使用 **仅 SELECT 权限** 的账号。端口以实际部署为准（常见 **54321**）。
+生产环境建议使用 **仅 SELECT 权限** 账号；端口以现场为准（常见 **54321**）。
 
-## 命令行用法
+---
 
-将 `{ROOT}` 换为本仓库根目录（含 `SKILL.md` 的目录）。
+## 命令行
+
+将 `{ROOT}` 换为 Skill 根目录（含 `SKILL.md` 的目录）。
 
 ```bash
-# 执行查询（stdout 为 JSON）
 python3 {ROOT}/scripts/kingbase_query.py --sql "SELECT 1" --max-rows 100
-
-# 从文件读取 SQL
 python3 {ROOT}/scripts/kingbase_query.py --file ./query.sql --max-rows 500
-
-# 仅校验 SQL，不连库
 python3 {ROOT}/scripts/kingbase_query.py --validate-only --sql "SELECT 1"
 ```
 
-## Claude Code Skill
+---
 
-仓库克隆到 **`.claude/skills/`** 下后，目录内应直接可见 **`SKILL.md`**（与 `scripts/` 同级）。
+## 安装 Skill
 
-### 个人（全局）安装
+**共同要求**：安装后目录中须能直接看到 **`SKILL.md`**，且 **`scripts/` 与其同级**（本仓库 `git clone` 后即为正确结构）。
+
+```mermaid
+flowchart TB
+  A[获取 kingbase-skill 目录] --> B[Qoder]
+  A --> C[Cursor]
+  A --> D[Claude Code]
+  B --> B1["~/.qoder/skills/ 或 项目 .qoder/skills/"]
+  C --> C1["~/.cursor/skills/ 或 项目 .cursor/skills/"]
+  D --> D1["~/.claude/skills/ 或 项目 .claude/skills/"]
+```
+
+### Qoder
+
+依据 [Qoder Skills 文档](https://docs.qoder.com/zh/extensions/skills)，可将本 Skill 放到**用户级**或**项目级**目录（`SKILL.md` 位于 `{skill-name}/` 下）。
+
+| 作用域 | 路径（将 `kingbase-skill` 换为你希望的目录名） |
+|--------|-----------------------------------------------|
+| 用户级 | `~/.qoder/skills/kingbase-skill/SKILL.md` |
+| 项目级 | `<项目根>/.qoder/skills/kingbase-skill/SKILL.md` |
+
+**手动安装（推荐，保留完整 `scripts/`）**
+
+```bash
+# 用户级（macOS / Linux）
+mkdir -p ~/.qoder/skills
+git clone <本仓库 URL> ~/.qoder/skills/kingbase-skill
+
+# 项目级
+mkdir -p .qoder/skills
+git clone <本仓库 URL> .qoder/skills/kingbase-skill
+```
+
+**Windows** 用户级示例：`%USERPROFILE%\.qoder\skills\kingbase-skill\SKILL.md`。
+
+**使用 [Skills CLI](https://github.com/vercel-labs/skills) 安装**（仓库已推送到 GitHub 后，在 Qoder 内置终端执行）：
+
+```bash
+npx skills add <本仓库 GitHub URL> -a qoder
+```
+
+更多参数见官方 CLI 说明。若与手动目录**同名**，项目级 Skill 优先级高于用户级。
+
+安装完成后 **重启 Qoder IDE**；在对话中输入 **`/`** 可查看已加载的 Skills。触发方式与官方一致：**描述需求自动匹配**，或 **`/` + 技能名** 手动调用。本 Skill 在 `SKILL.md` 中的 `name` 为 **`kingbase-database-readonly`**，若 Qoder 列表中有对应项，可尝试 `/kingbase-database-readonly`（以 IDE 内实际列表为准）。
+
+---
+
+### Cursor
+
+| 作用域 | 路径 |
+|--------|------|
+| 用户级 | `~/.cursor/skills/kingbase-skill/SKILL.md` |
+| 项目级 | `<项目根>/.cursor/skills/kingbase-skill/SKILL.md` |
+
+```bash
+mkdir -p ~/.cursor/skills
+git clone <本仓库 URL> ~/.cursor/skills/kingbase-skill
+# 或项目内: mkdir -p .cursor/skills && git clone <URL> .cursor/skills/kingbase-skill
+```
+
+重启 Cursor 或执行 **Developer: Reload Window**。
+
+---
+
+### Claude Code
+
+| 作用域 | 路径 |
+|--------|------|
+| 用户级 | `~/.claude/skills/kingbase-skill/SKILL.md` |
+| 项目级 | `<项目根>/.claude/skills/kingbase-skill/SKILL.md` |
 
 ```bash
 mkdir -p ~/.claude/skills
 git clone <本仓库 URL> ~/.claude/skills/kingbase-skill
 ```
 
-### 项目内安装
-
-```bash
-mkdir -p .claude/skills
-git clone <本仓库 URL> .claude/skills/kingbase-skill
-```
-
-**重启 Claude Code** 后，Skill 会自动加载。
-
-可选：设置 **`CLAUDE_SKILL_DIR`** 指向 Skill 根目录：
+重启 Claude Code。可选：设置 **`CLAUDE_SKILL_DIR`** 指向 Skill 根目录：
 
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/kingbase_query.py" --sql "SELECT 1"
 ```
 
-Windows PowerShell 示例：`$env:CLAUDE_SKILL_DIR = "D:\path\to\kingbase-skill"`，然后 `python "$env:CLAUDE_SKILL_DIR\scripts\kingbase_query.py" --sql "SELECT 1"`。
+PowerShell：`$env:CLAUDE_SKILL_DIR = "D:\path\to\kingbase-skill"`，再执行  
+`python "$env:CLAUDE_SKILL_DIR\scripts\kingbase_query.py" --sql "SELECT 1"`。
 
-## Cursor Skill
+---
 
-将本仓库放到 **`.cursor/skills/`** 下，保证 **`SKILL.md` 位于该 Skill 目录的根一级**（与 `scripts/` 同级）。
+## SQL 与安全
 
-### 个人（全局）安装
+| | |
+|--|--|
+| **允许** | 以 `SELECT`、`WITH`、`EXPLAIN`、`SHOW`、`DESC`、`DESCRIBE` 开头（细则见 `SKILL.md` 与 `scripts/kingbase_query.py`） |
+| **禁止** | 写操作关键字、`CALL` / `EXEC`、显式事务控制、**多条语句**（多个 `;`） |
 
-```bash
-mkdir -p ~/.cursor/skills
-git clone <本仓库 URL> ~/.cursor/skills/kingbase-skill
-```
+- 凭证仅放在环境变量或 **`.env/`**，勿贴入对话或版本库。
+- 注意 SQL 性能与结果中的敏感列脱敏。
+- 本工具为**只读辅助**，不能替代审计与权限治理。
 
-### 项目内安装
+---
 
-```bash
-mkdir -p .cursor/skills
-git clone <本仓库 URL> .cursor/skills/kingbase-skill
-```
+## 延伸阅读
 
-**重启 Cursor**（或「Developer: Reload Window」）后，Agent 可按 Skills 规则加载。
-
-## SQL 规则摘要
-
-详细列表以 `SKILL.md` 与 `scripts/kingbase_query.py` 为准。
-
-- 允许：以 `SELECT`、`WITH`、`EXPLAIN`、`SHOW`、`DESC`、`DESCRIBE` 开头
-- 禁止：写操作相关关键字、`CALL`/`EXEC`、事务控制、多语句等
-
-## 安全提示
-
-- 凭证只放在环境变量或私密配置中
-- 对用户提供的 SQL 仍需谨慎（性能与敏感列脱敏）
-- 本工具为 **只读辅助**，不能替代数据库审计与权限治理
-
-## 更多信息
-
-- Agent 行为与流程： [SKILL.md](SKILL.md)
-- 输出与边界说明： [reference.md](reference.md)
+| 文档 | 说明 |
+|------|------|
+| [SKILL.md](SKILL.md) | Agent 流程、连接说明、SQL 规则 |
+| [reference.md](reference.md) | 退出码、JSON 字段、驱动说明 |
