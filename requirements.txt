@@ -1,0 +1,4 @@
+# 人大金仓 KingbaseES：PostgreSQL 协议兼容场景下可用 psycopg2（支持 ARM/x86；版本与服务器兼容策略以官方为准）
+# 官方 ksycopg2 通常随金仓安装包分发，需配置 LD_LIBRARY_PATH（Linux）；本仓库默认不声明 ksycopg2 为 pip 依赖
+# 国内镜像: pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
+psycopg2-binary>=2.9.0

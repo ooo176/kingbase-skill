@@ -1,0 +1,12 @@
+# 本地密钥与连接配置（勿提交）
+.env/
+
+# macOS
+.DS_Store
+
+.idea/
+.vscode/
+.cursor/
+.claude/
+.cursor/skills/
+.claude/skills/
