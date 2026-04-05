@@ -18,6 +18,7 @@
 - [仓库结构](#仓库结构)
 - [环境与驱动](#环境与驱动)
 - [连接配置](#连接配置)
+- [AI 工具与敏感文件](#ai-工具与敏感文件)（Cursor · Qoder · Claude Code）
 - [命令行](#命令行)
 - [安装 Skill](#安装-skill)（Qoder · Cursor · Claude Code）
 - [SQL 与安全](#sql-与安全)
@@ -44,6 +45,7 @@ kingbase-skill/
 ├── SKILL.md              # Agent 主指令（必读）
 ├── reference.md          # 退出码、JSON 字段、校验说明
 ├── README.md             # 本文件
+├── .cursorignore         # Cursor：排除敏感路径（示例，可按需扩展）
 ├── requirements.txt      # Python 依赖（默认 psycopg2-binary）
 ├── .env/                 # 本地私密配置（已 .gitignore）
 │   └── env.sh            # 填写后: source .env/env.sh
@@ -131,6 +133,20 @@ set KB_URI=postgresql://SYSTEM:pass@127.0.0.1:54321/TEST
 环境变量默认仅对**当前终端**生效；长期保存可用系统「环境变量」或 PowerShell 的 `[Environment]::SetEnvironmentVariable(..., "User")`。
 
 生产环境建议使用 **仅 SELECT 权限** 账号；端口以现场为准（常见 **54321**）。
+
+---
+
+## AI 工具与敏感文件
+
+`.gitignore` 只能防止误提交；**Cursor**、**Qoder**、**Claude Code** 仍可能在索引、补全或对话上下文中触及本地路径。请在**项目根**为各工具配置忽略规则（语法通常与 `.gitignore` 相近：目录名加 `/`、支持 `*` 等通配）。
+
+| 工具 | 配置文件 | 作用（概要） |
+|------|-----------|--------------|
+| **Cursor** | `.cursorignore` | 减少索引与上下文纳入的路径（本仓库已提供示例文件） |
+| **Qoder** | `.qoderignore` | 与索引「忽略文件」配合，排除不需进入索引/Agent 上下文的目录与文件 |
+| **Claude Code** | `.claudeignore` | 尽量不把匹配路径纳入默认上下文（若工具升级，以官方文档为准） |
+
+**建议至少忽略**：`.env/`、含密钥的 `*.pem` / `*.key`、私有的连接配置目录等。若 Skill 与业务项目同仓，请按现场再补充业务敏感路径。
 
 ---
 

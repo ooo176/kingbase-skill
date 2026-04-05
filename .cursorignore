@@ -1,0 +1,2 @@
+# 本地连接与密钥 — 勿纳入 Cursor 索引与上下文（语法同 .gitignore）
+.env/
