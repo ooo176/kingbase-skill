@@ -79,7 +79,7 @@ export KB_PASSWORD="******"
 export KB_HOST="127.0.0.1"
 export KB_PORT="54321"
 export KB_DATABASE="TEST"
-# 可选：会话级默认 schema（简单标识符，字母数字下划线）
+# 可选：会话 search_path（简单标识符）。仅影响未加模式前缀的表名解析，不过滤 information_schema 等目录查询
 export KB_SCHEMA="public"
 export KB_MAX_ROWS="500"
 # 可选：auto | ksycopg2 | psycopg2（默认 auto：先试官方 ksycopg2，再 psycopg2）

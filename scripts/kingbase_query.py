@@ -211,7 +211,10 @@ def run_query(sql: str, max_rows: int) -> dict[str, Any]:
                 "rows": [],
                 "note": "无结果集（可能为仅 EXPLAIN/SHOW 等，依驱动行为而定）",
             }
-        return {"ok": True, "sql": validated, **payload}
+        out: dict[str, Any] = {"ok": True, "sql": validated, **payload}
+        if schema:
+            out["search_path"] = schema.strip()
+        return out
     finally:
         conn.close()
 

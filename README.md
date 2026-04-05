@@ -30,7 +30,7 @@ kingbase-skill/
 ### 驱动选择
 
 - **`KB_DRIVER=auto`（默认）**：优先加载 `ksycopg2`，失败则使用 `psycopg2`。
-- 仅 pip、无金仓客户端机器：可设 `export KB_DRIVER=psycopg2`。
+- 仅 pip、无金仓客户端机器：可设 `export KB_DRIVER=psycopg2`（Linux/macOS）；Windows PowerShell 为 `$env:KB_DRIVER = "psycopg2"`，CMD 为 `set KB_DRIVER=psycopg2`。
 
 ## 连接配置
 
@@ -50,11 +50,45 @@ export KB_MAX_ROWS="500"
 export KB_DRIVER="auto"
 ```
 
+**关于 `KB_SCHEMA`：** 脚本在连上库后会执行 `SET search_path TO <值>`，只影响**未写模式前缀**的对象名解析（例如 `SELECT * FROM foo` 会解析为 `nj.foo`）。**不会**自动限制 `information_schema`、`pg_catalog` 等系统视图里的结果；查「有哪些表」时仍需在 SQL 里写 `WHERE table_schema = 'nj'`（或你需要的模式名）。
+
 **或 URI：**
 
 ```bash
 export KB_URI="postgresql://SYSTEM:pass@127.0.0.1:54321/TEST"
 ```
+
+**Windows（当前终端会话）**
+
+在 **PowerShell** 中（推荐，与 Cursor 默认终端一致）：
+
+```powershell
+$env:KB_USER = "SYSTEM"
+$env:KB_PASSWORD = "你的密码"
+$env:KB_HOST = "127.0.0.1"
+$env:KB_PORT = "54321"
+$env:KB_DATABASE = "TEST"
+# 可选
+$env:KB_SCHEMA = "public"
+$env:KB_MAX_ROWS = "500"
+$env:KB_DRIVER = "auto"
+# 或 URI
+$env:KB_URI = "postgresql://SYSTEM:pass@127.0.0.1:54321/TEST"
+```
+
+在 **CMD** 中：
+
+```cmd
+set KB_USER=SYSTEM
+set KB_PASSWORD=你的密码
+set KB_HOST=127.0.0.1
+set KB_PORT=54321
+set KB_DATABASE=TEST
+set KB_URI=postgresql://SYSTEM:pass@127.0.0.1:54321/TEST
+```
+
+说明：上述写法只对 **当前窗口** 生效；关闭终端后需重新设置。若需长期生效，可在「系统属性 → 高级 → 环境变量」里添加用户变量，或在 PowerShell 中执行  
+`[Environment]::SetEnvironmentVariable("KB_USER", "SYSTEM", "User")`（其余变量同理，第三个参数 `"User"` 表示当前用户）。
 
 生产环境建议使用 **仅 SELECT 权限** 的账号。端口以实际部署为准（常见 **54321**）。
 
@@ -98,6 +132,8 @@ git clone <本仓库 URL> .claude/skills/kingbase-skill
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/kingbase_query.py" --sql "SELECT 1"
 ```
+
+Windows PowerShell 示例：`$env:CLAUDE_SKILL_DIR = "D:\path\to\kingbase-skill"`，然后 `python "$env:CLAUDE_SKILL_DIR\scripts\kingbase_query.py" --sql "SELECT 1"`。
 
 ## Cursor Skill
 
