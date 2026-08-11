@@ -45,16 +45,22 @@
 
 ```
 kingbase-skill/
-├── SKILL.md              # Agent 主指令（必读）
-├── reference.md          # 退出码、JSON 字段、校验说明
-├── README.md             # 本文件
-├── .cursorignore         # Cursor：排除敏感路径（示例，可按需扩展）
-├── requirements.txt      # Python 依赖（默认 psycopg2-binary）
-├── .env/                 # 本地私密配置（已 .gitignore）
-│   └── env.sh            # 填写后: source .env/env.sh
-├── .kb_backups/          # 写操作前受影响行的 JSON 备份（建议加入 .gitignore）
-└── scripts/
-    └── kingbase_query.py # SQL 查询 / 写操作 CLI
+├── SKILL.md                       # Agent 主指令（必读）
+├── README.md                      # 本文件
+├── requirements.txt               # Python 依赖（psycopg2-binary + faker）
+├── generate.rules.md              # 用户维护的数据生成规则（可选；从 examples/ 复制模板）
+├── .cursorignore                  # Cursor：排除敏感路径
+├── docs/                          # 规范与参考文档
+│   ├── SPEC.md                    # 能力规范
+│   └── reference.md               # CLI/JSON 字段、退出码、备份文件结构
+├── examples/                      # 示例与模板
+│   └── generate.rules.example.md  # 规则文件模板
+├── scripts/                       # 可执行脚本
+│   ├── kingbase_query.py          # SQL 查询 / 写操作 CLI
+│   └── kingbase_generate.py       # 测试数据生成 CLI
+├── .env/                          # 本地私密配置（已 .gitignore）
+│   └── env.sh                     # 填写后: source .env/env.sh
+└── .kb_backups/                   # 写操作前受影响行的 JSON 备份（.gitignore）
 ```
 
 ---
@@ -283,4 +289,6 @@ PowerShell：`$env:CLAUDE_SKILL_DIR = "D:\path\to\kingbase-skill"`，再执行
 | 文档 | 说明 |
 |------|------|
 | [SKILL.md](SKILL.md) | Agent 流程（含写操作确认与备份）、连接说明、SQL 规则 |
-| [reference.md](reference.md) | 退出码、JSON 字段、备份文件结构、解析局限 |
+| [docs/SPEC.md](docs/SPEC.md) | 完整能力规范 |
+| [docs/reference.md](docs/reference.md) | 退出码、JSON 字段、备份文件结构、解析局限 |
+| [examples/generate.rules.example.md](examples/generate.rules.example.md) | 数据生成规则模板 |

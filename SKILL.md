@@ -1,7 +1,7 @@
 ---
 name: kingbase-database
-description: "Queries and modifies KingbaseES (人大金仓 / Kingbase) databases via validated SQL and psycopg2 or ksycopg2. Supports SELECT (default read-only) and INSERT/UPDATE/DELETE with user confirmation and automatic backup. DDL blocked. Use when the user mentions 人大金仓、Kingbase、金仓数据库、KingbaseES, SQL queries, or database modifications."
-argument-hint: "[optional SQL or question about tables]"
+description: "Queries, modifies, and generates test data for KingbaseES (人大金仓 / Kingbase) databases via validated SQL and psycopg2 or ksycopg2. Supports SELECT (default read-only), INSERT/UPDATE/DELETE with user confirmation and automatic backup, and automated test data generation. DDL blocked. Use when the user mentions 人大金仓、Kingbase、金仓数据库、KingbaseES, SQL queries, database modifications, or test data generation."
+argument-hint: "[optional SQL or question about tables or test data generation]"
 parameter-schema:
   type: object
   description: 金仓连接用的环境变量。使用分项变量时需 KB_USER、KB_PASSWORD、KB_DATABASE 及 KB_HOST、KB_PORT（默认 54321）；使用 KB_URI（或 KINGBASE_URI）时可代替分项主机/端口/库名。
@@ -24,7 +24,7 @@ allowed-tools: Read, Bash
 
 > **语言**：用户用中文则用中文回复；用户用英文则用英文回复。
 
-# 人大金仓 KingbaseES 查询与写操作
+# 人大金仓 KingbaseES 查询、写操作与测试数据生成
 
 ## 何时使用本 Skill
 
@@ -33,11 +33,13 @@ allowed-tools: Read, Bash
 - 用户要**查询 KingbaseES（人大金仓）** 中的表、视图、统计或任意数据
 - 用户给出或需要你编写**自定义 SQL**（SELECT 或 INSERT/UPDATE/DELETE）
 - 用户明确说需要**读**、**改**、**删**、**增**数据（除 DDL 外）
+- 用户要**生成测试数据**、**填充数据库**、**造测试数据**
 
 **支持的操作**
 
 - **只读（默认）**：`SELECT` / `WITH` / `EXPLAIN` / `SHOW` / `DESC` / `DESCRIBE`
 - **写操作（须用户确认 + 自动备份）**：`INSERT` / `UPDATE` / `DELETE`
+- **测试数据生成（自动推断 + 规则文件）**：零配置生成、基于 `generate.rules.md` 规则文件生成
 
 **始终禁止**：`DROP` / `CREATE` / `ALTER` / `TRUNCATE` / `RENAME` / `GRANT` / `REVOKE` / `MERGE` / `REPLACE` / `CALL` / `EXECUTE` / `EXEC` 等 DDL 与权限变更；显式事务控制；多条语句同时执行。
 
@@ -58,7 +60,7 @@ allowed-tools: Read, Bash
 | 任务 | 做法 |
 |------|------|
 | 执行只读 SQL | `Bash` → `python3` 运行本 Skill 内脚本（见下） |
-| 查看 Skill 说明或示例 | `Read` → 打开本仓库 `SKILL.md` 或 `reference.md` |
+| 查看 Skill 说明或示例 | `Read` → 打开本仓库 `SKILL.md` 或 `docs/reference.md` |
 
 **脚本路径**（将 `{SKILL_ROOT}` 换成本仓库根目录，即包含 `SKILL.md` 的目录）：
 
@@ -71,6 +73,11 @@ python3 {SKILL_ROOT}/scripts/kingbase_query.py --file /path/to/query.sql --max-r
 python3 {SKILL_ROOT}/scripts/kingbase_query.py --allow-write --confirm --sql "UPDATE t SET x=1 WHERE id=2"
 python3 {SKILL_ROOT}/scripts/kingbase_query.py --allow-write --confirm --sql "DELETE FROM t WHERE id=2"
 python3 {SKILL_ROOT}/scripts/kingbase_query.py --allow-write --confirm --sql "INSERT INTO t (a,b) VALUES (1,2)"
+
+# 生成测试数据：--dry-run 预览，--confirm 执行
+python3 {SKILL_ROOT}/scripts/kingbase_generate.py --count 100 --dry-run
+python3 {SKILL_ROOT}/scripts/kingbase_generate.py --count 100 --confirm
+python3 {SKILL_ROOT}/scripts/kingbase_generate.py --tables "dept:10,emp:100" --confirm
 ```
 
 > `--confirm` 表示「Agent 已当面获取用户授权」。**不得**在未取得用户同意的情况下自行加上此参数。
@@ -176,6 +183,154 @@ pip install -r {SKILL_ROOT}/requirements.txt -i https://mirrors.aliyun.com/pypi/
 
 ---
 
+## 生成测试数据（Generate）
+
+本 Skill 提供**零配置自动推断**的测试数据生成能力，非技术人员只需说「每个表生成 100 条」即可。
+
+### 三种使用方式（由简到繁）
+
+| 层级 | 谁用 | 规则维护位置 | 怎么做 |
+|------|------|-------------|--------|
+| **L1 规则文件** | 非技术人员（推荐） | 项目内 `generate.rules.md` | 用中文写每张表规则，对 Agent 说「按规则生成」 |
+| **L2 对话** | 临时一次性需求 | 对话中口头说明 | 「这次只给 employee 生成 50 条」 |
+| **L3 CLI / JSON** | 开发/自动化 | 命令行或 CI | `--count 100` / `--rules-json '{...}'` |
+
+**规则优先级**（冲突时）：对话临时指令 > `generate.rules.md` > 自动推断。
+
+### L1：规则文件 `generate.rules.md`（推荐）
+
+非技术人员在**项目根目录**维护 `generate.rules.md`，用**中文**描述每张表的生成要求。Agent 会读取此文件并翻译为技术参数执行。
+
+**文件示例**：
+
+```markdown
+# 数据生成规则
+
+schema: public
+默认每个表: 100 条
+
+## department
+- 生成 10 条
+- dept_name 从以下随机：研发部、市场部、财务部
+
+## employee
+- 生成 100 条
+- status 随机：在职、离职
+- email 格式：user_{序号}@example.com
+
+## 不生成
+- sys_log
+- audit_history
+```
+
+**支持的写法**（自然语言）：
+
+| 你想表达 | 示例 |
+|----------|------|
+| 全局默认条数 | `默认每个表: 100 条` |
+| 某表条数 | `## employee` 下写 `- 生成 100 条` |
+| 枚举字段 | `- status 随机：在职、离职` |
+| 固定格式 | `- email 格式：user_{序号}@example.com` |
+| 跳过某表 | `## 不生成` 下列出表名 |
+
+**使用方法**：编辑好 `generate.rules.md` 后，对 Agent 说：
+
+- 「按 generate.rules.md 生成数据」
+- 「帮我生成测试数据」
+
+### Agent 生成流程
+
+1. **读取**项目内 `generate.rules.md`（若存在）；用户对话中的临时要求可覆盖文件内容。
+2. 将 rules 文件**翻译**为 `--schema` / `--tables` / `--exclude-tables` / `--rules-json`。
+3. 设置或确认连接环境变量。
+4. 执行 `--dry-run`，将 JSON **翻译为中文摘要**展示：
+
+   ```text
+   即将在 schema「public」生成测试数据：
+
+     备份并重命名（后缀 20260811）：
+       · department（当前 5 行）→ department_20260811
+       · employee（当前 120 行）→ employee_20260811
+
+     生成计划：
+       · department：10 行
+       · employee：100 行
+
+     外键关系（自动发现）：
+       · employee.dept_id → department.id
+
+   确认执行吗？
+   ```
+
+5. 用户确认。
+6. 执行 `--confirm`，用中文汇报备份表名与各表插入行数。
+
+### 自动推断（未写规则的字段）
+
+脚本连接数据库后**自动完成**以下工作：
+
+- **发现表**：从 `information_schema.tables` 读取 schema 下所有用户表
+- **发现外键关系**：构建依赖图，**拓扑排序**决定 INSERT 顺序（父表先于子表）
+- **自动推断字段生成规则**：
+
+| 列特征 | 自动生成策略 |
+|--------|-------------|
+| serial / identity / 自增 PK | 数据库自动 |
+| integer/bigint PK（非 FK） | 递增整数 |
+| FK 列 | 引用父表已插入行的 PK 值（random） |
+| 列名含 name/姓名/mc | 中文姓名（Faker） |
+| 列名含 email/phone/mobile/lxfs/address/dz | 对应 Faker provider |
+| 列名含 time/date/created/updated | 近期随机日期或 now() |
+| varchar/text NOT NULL | 随机文本 |
+| boolean | 随机 true/false |
+| numeric/decimal | 范围内随机数 |
+| uuid 类型 | uuid4 |
+| nullable 非 PK | 约 10% NULL |
+| 其余 | 按 data_type 通用兜底 |
+
+### L2：临时对话指令
+
+对话中可临时覆盖规则文件：
+
+- 「这次 department 改成 20 条」
+- 「只生成 employee 表，50 条」
+
+Agent 会合并规则文件和对话指令，优先采用对话中的要求。
+
+### L3：直接 CLI
+
+开发者或自动化场景可直接命令行：
+
+```bash
+# 零配置：schema 下全部表，每张 100 条
+python3 scripts/kingbase_generate.py --count 100 --confirm
+
+# 指定表和不同条数
+python3 scripts/kingbase_generate.py --tables "department:10,employee:100" --confirm
+
+# 排除某些表
+python3 scripts/kingbase_generate.py --count 100 --exclude-tables "sys_log,audit_history" --confirm
+
+# 字段级规则 JSON
+python3 scripts/kingbase_generate.py --count 100 --rules-json '{"employee":{"status":{"type":"enum","values":["在职","离职"]}}}' --confirm
+
+# 预览再执行
+python3 scripts/kingbase_generate.py --count 100 --dry-run
+python3 scripts/kingbase_generate.py --count 100 --confirm
+```
+
+### 安全约束
+
+| 项 | 规则 |
+|----|------|
+| 授权 | 必须 `--confirm` |
+| 预览 | Agent **必须先 dry-run**，用中文展示计划 |
+| 环境 | 仅测试库使用；可选 `KB_ALLOW_GENERATE=1` |
+| 备份 | 执行前将旧表 `RENAME` 为 `{表名}_{YYYYMMDD}` |
+| 事务 | 全流程单事务，失败回滚 |
+
+---
+
 ## SQL 规则（与脚本一致）
 
 **只读模式（默认）**
@@ -229,4 +384,6 @@ SELECT * FROM your_table LIMIT 20;
 
 ## 更多说明
 
-- 实现细节与边界案例见 [reference.md](reference.md)。
+- 实现细节与边界案例见 [docs/reference.md](docs/reference.md)。
+- 规则文件模板见 [examples/generate.rules.example.md](examples/generate.rules.example.md)。
+- 完整能力规范见 [docs/SPEC.md](docs/SPEC.md)。

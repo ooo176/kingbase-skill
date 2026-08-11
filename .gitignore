@@ -1,6 +1,12 @@
 # 本地密钥与连接配置（勿提交）
 .env/
 
+# 用户本地维护的生成规则（含具体表/字段配置，视为私有）
+generate.rules.md
+
+# 写操作前的备份 JSON
+.kb_backups/
+
 # macOS
 .DS_Store
 

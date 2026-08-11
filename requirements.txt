@@ -2,3 +2,6 @@
 # 官方 ksycopg2 通常随金仓安装包分发，需配置 LD_LIBRARY_PATH（Linux）；本仓库默认不声明 ksycopg2 为 pip 依赖
 # 国内镜像: pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
 psycopg2-binary>=2.9.0
+
+# 测试数据生成
+faker>=24.0.0
