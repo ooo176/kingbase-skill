@@ -1,6 +1,6 @@
 ---
-name: kingbase-database-readonly
-description: "Queries KingbaseES (人大金仓 / Kingbase) databases in read-only mode via validated SQL and psycopg2 or ksycopg2. Supports SELECT-style exploration, SHOW metadata, and custom SQL; blocks INSERT/UPDATE/DELETE/DDL and other writes. Use when the user mentions 人大金仓、Kingbase、金仓数据库、KingbaseES, read-only SQL, or querying Kingbase."
+name: kingbase-database
+description: "Queries and modifies KingbaseES (人大金仓 / Kingbase) databases via validated SQL and psycopg2 or ksycopg2. Supports SELECT (default read-only) and INSERT/UPDATE/DELETE with user confirmation and automatic backup. DDL blocked. Use when the user mentions 人大金仓、Kingbase、金仓数据库、KingbaseES, SQL queries, or database modifications."
 argument-hint: "[optional SQL or question about tables]"
 parameter-schema:
   type: object
@@ -24,17 +24,32 @@ allowed-tools: Read, Bash
 
 > **语言**：用户用中文则用中文回复；用户用英文则用英文回复。
 
-# 人大金仓 KingbaseES 只读查询（Read-Only）
+# 人大金仓 KingbaseES 查询与写操作
 
 ## 何时使用本 Skill
 
 在以下情况启用：
 
-- 用户要**查询 KingbaseES（人大金仓）**中的表、视图、统计或任意**只读**数据
-- 用户给出或需要你编写**自定义 SQL**（仅限只读）
-- 用户明确说**不能改库**、只要 SELECT / 分析 / 探查 schema
+- 用户要**查询 KingbaseES（人大金仓）** 中的表、视图、统计或任意数据
+- 用户给出或需要你编写**自定义 SQL**（SELECT 或 INSERT/UPDATE/DELETE）
+- 用户明确说需要**读**、**改**、**删**、**增**数据（除 DDL 外）
 
-**禁止**：任何 **INSERT、UPDATE、DELETE、MERGE、DDL、GRANT、存储过程执行（CALL/EXEC）** 等写入或权限变更。若用户要求改数据，说明本 Skill 与脚本均不支持，请改用 DBA 工具或专用迁移流程。
+**支持的操作**
+
+- **只读（默认）**：`SELECT` / `WITH` / `EXPLAIN` / `SHOW` / `DESC` / `DESCRIBE`
+- **写操作（须用户确认 + 自动备份）**：`INSERT` / `UPDATE` / `DELETE`
+
+**始终禁止**：`DROP` / `CREATE` / `ALTER` / `TRUNCATE` / `RENAME` / `GRANT` / `REVOKE` / `MERGE` / `REPLACE` / `CALL` / `EXECUTE` / `EXEC` 等 DDL 与权限变更；显式事务控制；多条语句同时执行。
+
+## 写操作强制流程（增删改）
+
+写操作会**改变数据**，必须严格按照以下步骤：
+
+1. **展示 SQL** — 把即将执行的 INSERT/UPDATE/DELETE 语句原文完整展示给用户。
+2. **说明影响面** — 对 UPDATE/DELETE 先执行同 WHERE 条件的 SELECT，告知用户**将影响多少行**、大致内容。
+3. **征得用户明示同意** — 用户明确回复「同意 / 执行 / yes / OK」等含义时才继续；仅收到「看一下」「继续研究」等含糊回复**不算同意**。
+4. **执行时自动备份** — 脚本在 UPDATE/DELETE 前将受影响行落地为 JSON 文件（默认 `.kb_backups/`，可用 `KB_BACKUP_DIR` 环境变量指定目录），随执行结果一并返回备份路径。INSERT 因不涉及已有数据，不产生备份文件。
+5. **回滚参考** — 若执行后需要撤销，读取备份 JSON，按 `columns` + `rows` 手工构造 INSERT（对 DELETE）或 UPDATE（对 UPDATE，用 PK 或原始 WHERE 定位）。备份中的 `where` 字段可用于对齐原始条件。
 
 ---
 
@@ -48,10 +63,17 @@ allowed-tools: Read, Bash
 **脚本路径**（将 `{SKILL_ROOT}` 换成本仓库根目录，即包含 `SKILL.md` 的目录）：
 
 ```bash
-python3 {SKILL_ROOT}/scripts/kingbase_query.py --sql "你的SQL"
-# 或
+# 只读查询（默认）
+python3 {SKILL_ROOT}/scripts/kingbase_query.py --sql "SELECT ..."
 python3 {SKILL_ROOT}/scripts/kingbase_query.py --file /path/to/query.sql --max-rows 500
+
+# 写操作：必须 --allow-write + --confirm，且事前已获得用户同意
+python3 {SKILL_ROOT}/scripts/kingbase_query.py --allow-write --confirm --sql "UPDATE t SET x=1 WHERE id=2"
+python3 {SKILL_ROOT}/scripts/kingbase_query.py --allow-write --confirm --sql "DELETE FROM t WHERE id=2"
+python3 {SKILL_ROOT}/scripts/kingbase_query.py --allow-write --confirm --sql "INSERT INTO t (a,b) VALUES (1,2)"
 ```
+
+> `--confirm` 表示「Agent 已当面获取用户授权」。**不得**在未取得用户同意的情况下自行加上此参数。
 
 在 Claude Code 且已设置 `CLAUDE_SKILL_DIR` 时，可写为：
 
@@ -84,6 +106,8 @@ export KB_SCHEMA="public"
 export KB_MAX_ROWS="500"
 # 可选：auto | ksycopg2 | psycopg2（默认 auto：先试官方 ksycopg2，再 psycopg2）
 export KB_DRIVER="auto"
+# 可选：UPDATE/DELETE 前受影响行备份的输出目录（默认 .kb_backups/）
+export KB_BACKUP_DIR=".kb_backups"
 ```
 
 **方式 B — 连接 URI**
@@ -115,27 +139,60 @@ pip install -r {SKILL_ROOT}/requirements.txt -i https://mirrors.aliyun.com/pypi/
 
 ## Agent 执行流程
 
-1. **确认意图**：只读查询；若用户要求写入，拒绝并说明边界。
-2. **编写或确认 SQL**：优先参数化思路；避免拼接不可信输入。若 SQL 来自用户粘贴，仍须经脚本校验。
-3. **先校验（可选）**：
+### 只读查询
+
+1. **确认意图**：只是查询。
+2. **编写或确认 SQL**：优先参数化思路；避免拼接不可信输入。
+3. **校验（可选）**：
    ```bash
    python3 {SKILL_ROOT}/scripts/kingbase_query.py --validate-only --sql "SELECT 1"
    ```
-4. **执行查询**：
+4. **执行**：
    ```bash
    python3 {SKILL_ROOT}/scripts/kingbase_query.py --sql "..." --max-rows 500
    ```
-5. **解读结果**：脚本 stdout 为 **JSON**（`ok`、`columns`、`rows`、`row_count`、`truncated` 等）。向用户总结关键结论；大行集说明已截断并可缩小条件或提高 `KB_MAX_ROWS`（注意内存与性能）。
+5. **解读结果**：stdout 为 JSON（`ok` / `columns` / `rows` / `row_count` / `truncated` 等）。
+
+### 写操作（INSERT / UPDATE / DELETE）
+
+1. **展示 SQL**：把 SQL 原文展示给用户。
+2. **预估影响面**（UPDATE / DELETE）：以同 WHERE 条件跑一次 SELECT，告知用户「本次将影响 N 行」并列举样本。
+3. **征得用户同意**：等待用户明确回复同意后，再进入下一步。
+4. **校验（可选）**：
+   ```bash
+   python3 {SKILL_ROOT}/scripts/kingbase_query.py --validate-only --allow-write --sql "UPDATE t SET x=1 WHERE id=2"
+   ```
+5. **执行**（脚本会先做一次备份 SELECT，再执行写操作，最后 commit）：
+   ```bash
+   python3 {SKILL_ROOT}/scripts/kingbase_query.py --allow-write --confirm --sql "UPDATE t SET x=1 WHERE id=2"
+   ```
+6. **回报**：输出 JSON 中的 `rows_affected` 与 `backup.file`（备份文件绝对路径），一并汇报给用户，便于日后回滚。
+
+**注意**
+
+- **`--confirm` 是硬门槛**。脚本在缺少 `--confirm` 时拒绝执行任何写操作。
+- **不允许一次写多张表**。脚本仅支持单条语句、单表 UPDATE / DELETE 的 WHERE 提取；对复杂写操作先与用户拆分。
+- **无 WHERE 的 UPDATE / DELETE** 会备份**整表**当前快照，请提前警告用户。
 
 ---
 
 ## SQL 规则（与脚本一致）
 
-- 允许以 **`SELECT`、`WITH`、`EXPLAIN`、`SHOW`、`DESC`、`DESCRIBE`** 开头（大小写不敏感，可带末尾分号）。具体语句是否受当前 **兼容模式**（Oracle/MySQL/PostgreSQL 等）支持，以库端为准。
-- **禁止**语句中出现以下关键字（整词匹配，含注释 stripped 后的主体）：  
-  `INSERT`、`UPDATE`、`DELETE`、`MERGE`、`REPLACE`、`DROP`、`CREATE`、`ALTER`、`TRUNCATE`、`RENAME`、`GRANT`、`REVOKE`、`COMMIT`、`ROLLBACK`、`SAVEPOINT`、`CALL`、`EXECUTE`、`EXEC`。
-- **禁止**多条语句（多个 `;` 分隔的独立语句）。
-- 默认最多返回 **500** 行（`--max-rows` 或 `KB_MAX_ROWS`）；超大结果集建议在 SQL 中加 `WHERE`/分页。
+**只读模式（默认）**
+
+- 允许以 `SELECT` / `WITH` / `EXPLAIN` / `SHOW` / `DESC` / `DESCRIBE` 开头。
+- 语句主体中出现 `INSERT` / `UPDATE` / `DELETE` / `MERGE` / `REPLACE` / `DROP` / `CREATE` / `ALTER` / `TRUNCATE` / `RENAME` / `GRANT` / `REVOKE` / `COMMIT` / `ROLLBACK` / `SAVEPOINT` / `CALL` / `EXECUTE` / `EXEC` 之一即被拒绝。
+
+**写模式（`--allow-write --confirm`）**
+
+- 允许以 `INSERT` / `UPDATE` / `DELETE` 开头；`SELECT` 等只读语句会自动走只读路径。
+- 始终禁止 `DROP` / `CREATE` / `ALTER` / `TRUNCATE` / `RENAME` / `GRANT` / `REVOKE` / `MERGE` / `REPLACE` / `CALL` / `EXECUTE` / `EXEC` 及显式事务控制。
+
+**通用**
+
+- 禁止多条语句（多个 `;` 分隔）。
+- 只读默认最多返回 **500** 行（`--max-rows` 或 `KB_MAX_ROWS`）。
+- 写模式下，脚本以单一事务提交；执行失败则整体回滚。
 
 ---
 
@@ -164,8 +221,9 @@ SELECT * FROM your_table LIMIT 20;
 ## 安全与合规
 
 - 不在对话中重复打印完整密码。
-- 生产库查询使用**只读账号**；限制 `KB_MAX_ROWS` 与查询时间窗口。
+- 生产库查询使用**只读账号**；仅在必要且授权的库上使用写权限账号。
 - 用户 SQL 可能包含敏感列；输出时注意脱敏与最小必要原则。
+- 写模式下，`.kb_backups/` 目录内 JSON 可能包含**受影响行的原始数据**（含潜在敏感列）；请纳入 `.gitignore` 并按需清理。
 
 ---
 

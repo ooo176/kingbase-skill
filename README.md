@@ -3,12 +3,12 @@
 <p align="center">
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.9+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.9+"></a>
   <img src="https://img.shields.io/badge/KingbaseES-人大金仓-C41E3A?style=flat-square" alt="KingbaseES">
-  <img src="https://img.shields.io/badge/SQL-只读-2ea043?style=flat-square" alt="Read-only SQL">
+  <img src="https://img.shields.io/badge/SQL-CRUD-2ea043?style=flat-square" alt="CRUD SQL">
   <img src="https://img.shields.io/badge/Agent-Qoder%20%7C%20Cursor%20%7C%20Claude-6f42c1?style=flat-square" alt="Qoder Cursor Claude">
 </p>
 
-<p align="center"><strong>人大金仓 KingbaseES · 只读 SQL Agent Skill</strong><br>
-在 <strong>Qoder</strong>、<strong>Cursor</strong>、<strong>Claude Code</strong> 中通过校验后的只读 SQL 探查数据与元数据（不支持写入与 DDL）</p>
+<p align="center"><strong>人大金仓 KingbaseES · SQL Agent Skill（读 + 增删改，DDL 禁用）</strong><br>
+在 <strong>Qoder</strong>、<strong>Cursor</strong>、<strong>Claude Code</strong> 中通过校验后的 SQL 查询与修改数据；INSERT/UPDATE/DELETE 需用户确认，UPDATE/DELETE 自动备份受影响行</p>
 
 ---
 
@@ -28,10 +28,13 @@
 
 ## 核心能力
 
-- **自定义查询**：`SELECT` / `WITH` / `EXPLAIN` / `SHOW` / `DESC` / `DESCRIBE`（具体以当前库**兼容模式**为准）
-- **脚本校验**：拦截 `INSERT`、`UPDATE`、`DELETE`、`MERGE`、DDL、`CALL` / `EXEC` 等
+- **只读查询**：`SELECT` / `WITH` / `EXPLAIN` / `SHOW` / `DESC` / `DESCRIBE`
+- **写操作（需用户确认）**：`INSERT` / `UPDATE` / `DELETE`
+  - 加 `--allow-write --confirm` 才能执行
+  - UPDATE / DELETE **执行前自动备份**受影响行至 JSON（默认 `.kb_backups/`）
+  - INSERT 因不涉及既有数据，不产生备份
+- **始终禁止**：DDL（`DROP` / `CREATE` / `ALTER` / `TRUNCATE` / `RENAME`）、`GRANT` / `REVOKE`、`MERGE` / `REPLACE`、`CALL` / `EXECUTE`、显式事务控制、多条语句同时执行
 - **JSON 输出**：便于 Agent 解析与汇总
-- **行数上限**：默认限制返回行数，降低大结果集风险
 - **双驱动**：`psycopg2-binary`（pip）或 **ksycopg2**（金仓安装包）
 
 ---
@@ -49,8 +52,9 @@ kingbase-skill/
 ├── requirements.txt      # Python 依赖（默认 psycopg2-binary）
 ├── .env/                 # 本地私密配置（已 .gitignore）
 │   └── env.sh            # 填写后: source .env/env.sh
+├── .kb_backups/          # 写操作前受影响行的 JSON 备份（建议加入 .gitignore）
 └── scripts/
-    └── kingbase_query.py # 只读查询 CLI
+    └── kingbase_query.py # SQL 查询 / 写操作 CLI
 ```
 
 ---
@@ -95,6 +99,7 @@ export KB_DATABASE="TEST"
 export KB_SCHEMA="public"
 export KB_MAX_ROWS="500"
 export KB_DRIVER="auto"
+export KB_BACKUP_DIR=".kb_backups"   # 可选，UPDATE/DELETE 前的备份目录
 ```
 
 **`KB_SCHEMA` 说明**：连库后会执行 `SET search_path TO <值>`，只影响**未带模式前缀**的对象名。查「某模式下有哪些表」时，仍需在 SQL 里写 `WHERE table_schema = '你的模式名'`（`information_schema` / `pg_catalog` 不受 `search_path` 限制）。
@@ -155,9 +160,15 @@ set KB_URI=postgresql://SYSTEM:pass@127.0.0.1:54321/TEST
 将 `{ROOT}` 换为 Skill 根目录（含 `SKILL.md` 的目录）。
 
 ```bash
+# 只读查询
 python3 {ROOT}/scripts/kingbase_query.py --sql "SELECT 1" --max-rows 100
 python3 {ROOT}/scripts/kingbase_query.py --file ./query.sql --max-rows 500
 python3 {ROOT}/scripts/kingbase_query.py --validate-only --sql "SELECT 1"
+
+# 写操作（Agent 已获用户同意后传入 --confirm）
+python3 {ROOT}/scripts/kingbase_query.py --allow-write --confirm --sql "DELETE FROM t WHERE id=1"
+python3 {ROOT}/scripts/kingbase_query.py --allow-write --confirm --sql "UPDATE t SET x=2 WHERE id=1"
+python3 {ROOT}/scripts/kingbase_query.py --allow-write --confirm --sql "INSERT INTO t(a,b) VALUES(1,2)"
 ```
 
 ---
@@ -255,12 +266,15 @@ PowerShell：`$env:CLAUDE_SKILL_DIR = "D:\path\to\kingbase-skill"`，再执行
 
 | | |
 |--|--|
-| **允许** | 以 `SELECT`、`WITH`、`EXPLAIN`、`SHOW`、`DESC`、`DESCRIBE` 开头（细则见 `SKILL.md` 与 `scripts/kingbase_query.py`） |
-| **禁止** | 写操作关键字、`CALL` / `EXEC`、显式事务控制、**多条语句**（多个 `;`） |
+| **只读默认** | 以 `SELECT` / `WITH` / `EXPLAIN` / `SHOW` / `DESC` / `DESCRIBE` 开头 |
+| **写模式** | `--allow-write --confirm` 时允许 `INSERT` / `UPDATE` / `DELETE`；UPDATE / DELETE 执行前自动备份 |
+| **禁止** | DDL（`DROP` / `CREATE` / `ALTER` / `TRUNCATE` / `RENAME`）、`GRANT` / `REVOKE`、`MERGE` / `REPLACE`、`CALL` / `EXECUTE`、显式事务控制、多条语句 |
 
 - 凭证仅放在环境变量或 **`.env/`**，勿贴入对话或版本库。
+- 备份 JSON 中含**原始行数据**，请将 `.kb_backups/` 纳入 `.gitignore` 并按需清理。
+- 写操作**必须**在用户明确同意后再执行；`--confirm` 是硬门槛。
 - 注意 SQL 性能与结果中的敏感列脱敏。
-- 本工具为**只读辅助**，不能替代审计与权限治理。
+- 本工具**不能**替代审计与权限治理；生产库建议按用途分配只读 / 只写账号。
 
 ---
 
@@ -268,5 +282,5 @@ PowerShell：`$env:CLAUDE_SKILL_DIR = "D:\path\to\kingbase-skill"`，再执行
 
 | 文档 | 说明 |
 |------|------|
-| [SKILL.md](SKILL.md) | Agent 流程、连接说明、SQL 规则 |
-| [reference.md](reference.md) | 退出码、JSON 字段、驱动说明 |
+| [SKILL.md](SKILL.md) | Agent 流程（含写操作确认与备份）、连接说明、SQL 规则 |
+| [reference.md](reference.md) | 退出码、JSON 字段、备份文件结构、解析局限 |
