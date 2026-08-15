@@ -9,19 +9,19 @@
 | 能力 | 入参 | 出参 |
 |------|------|------|
 | **查询** | 数据库连接信息 + SQL | 查询结果（JSON） |
-| **生成数据** | 连接 + 条数（+ 可选表名） | 直接写入数据库（先备份重命名旧表） |
+| **生成数据** | 连接 + 条数（+ 可选表名） | 生成SQL文件（不直接写入数据库） |
 
-生成数据采用**零配置自动推断**：表关系与字段规则从数据库元数据读取，非技术人员只需对 Agent 说「每个表生成 100 条」即可。
+生成数据采用**零配置自动推断**：表关系与字段规则从数据库元数据读取，生成INSERT SQL语句文件，用户审查后手动执行。非技术人员只需对 Agent 说「每个表生成 100 条SQL」即可。
 
 ---
 
 ## 设计原则
 
-1. **简单优先**：默认一条命令 / 一句自然语言即可生成。
+1. **简单优先**：默认一条命令 / 一句自然语言即可生成SQL。
 2. **自动推断一切**：表列表、外键关系、字段生成策略，全部从 `information_schema` / `pg_catalog` 读取。
-3. **Agent 是翻译层**：Agent 探库 → 展示中文预览 → 确认 → 执行。
+3. **Agent 是翻译层**：Agent 探库 → 展示中文预览 → 确认 → 生成SQL文件。
 4. **双脚本分离**：查询（`kingbase_query.py`）与生成（`kingbase_generate.py`）解耦。
-5. **生成前必备份**：旧表 `RENAME` 为 `{表名}_{YYYYMMDD}`，再建同名空表写入新数据。
+5. **不直接写入数据库**：生成SQL文件供用户审查，确保数据安全。
 6. **安全门槛**：必须 `--confirm`；先 `--dry-run` 展示计划。
 
 ---
@@ -84,9 +84,9 @@ stdout JSON（详见 [reference.md](reference.md)）：
 
 | 层级 | 谁用 | 规则维护位置 | 怎么做 |
 |------|------|-------------|--------|
-| **L1 规则文件** | 非技术人员（推荐） | 项目内 [`generate.rules.md`](../generate.rules.md) | 用中文写每张表规则，对 Agent 说「按规则生成」 |
-| **L2 对话** | 临时一次性需求 | 对话中口头说明 | 「这次只给 employee 生成 50 条」 |
-| **L3 CLI / JSON** | 开发/自动化 | 命令行或 CI | `--count 100` / `--rules-json '{...}'` |
+| **L1 规则文件** | 非技术人员（推荐） | 项目内 [`generate.rules.md`](../generate.rules.md) | 用中文写每张表规则，对 Agent 说「按规则生成SQL」 |
+| **L2 对话** | 临时一次性需求 | 对话中口头说明 | 「这次只给 employee 生成 50 条SQL」 |
+| **L3 CLI / JSON** | 开发/自动化 | 命令行或 CI | `--count 100 --output data.sql` / `--rules-json '{...}'` |
 
 **规则优先级**（冲突时）：对话临时指令 > `generate.rules.md` > 自动推断。
 
@@ -145,8 +145,8 @@ python3 scripts/kingbase_generate.py \
 
 用户维护好 `generate.rules.md` 后，只需说：
 
-- 「按 generate.rules.md 生成数据」
-- 「帮我生成测试数据」（Agent 默认先找项目内 `generate.rules.md`）
+- 「按 generate.rules.md 生成数据SQL」
+- 「帮我生成测试数据SQL」（Agent 默认先找项目内 `generate.rules.md`）
 
 **Agent 流程**：
 
@@ -156,9 +156,11 @@ flowchart LR
   agentParse --> probe[探库校验表是否存在]
   probe --> preview[中文预览]
   preview --> userOk{用户确认?}
-  userOk -->|是| runCLI[执行 kingbase_generate.py]
+  userOk -->|是| runCLI[生成SQL文件]
   userOk -->|否| editRules[用户改 rules 文件]
-  runCLI --> report[汇报结果]
+  runCLI --> report[汇报SQL文件路径]
+  report --> userReview[用户审查SQL]
+  userReview --> execute[手动执行SQL]
 ```
 
 对话中的临时要求（如「这次 department 改成 20 条」）可**覆盖** rules 文件，Agent 合并后再执行。
@@ -166,9 +168,9 @@ flowchart LR
 **Agent 展示的中文预览示例**（dry-run 输出翻译后）：
 
 ```text
-即将在 schema「public」生成测试数据：
+即将生成测试数据SQL，在 schema「public」：
 
-  备份并重命名（后缀 20260811）：
+  备份计划（SQL中会包含RENAME语句，后缀 20260811）：
     · department（当前 5 行）→ department_20260811
     · employee（当前 120 行）→ employee_20260811
 
@@ -179,7 +181,7 @@ flowchart LR
   外键关系（自动发现）：
     · employee.dept_id → department.id
 
-确认执行吗？
+确认生成SQL文件吗？
 ```
 
 用户回复「确认」后，Agent 调用：
@@ -193,7 +195,17 @@ python3 scripts/kingbase_generate.py \
 python3 scripts/kingbase_generate.py \
   --schema public \
   --count 100 \
-  --confirm
+  --confirm \
+  --output generated_data_20260816_143052.sql
+```
+
+生成后，Agent 提醒用户审查SQL文件，确认无误后可执行：
+
+```bash
+python3 scripts/kingbase_query.py \
+  --allow-write \
+  --confirm \
+  --file generated_data_20260816_143052.sql
 ```
 
 ### 2.4 L2：简单 CLI（零配置）

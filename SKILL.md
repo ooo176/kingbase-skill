@@ -74,10 +74,10 @@ python3 {SKILL_ROOT}/scripts/kingbase_query.py --allow-write --confirm --sql "UP
 python3 {SKILL_ROOT}/scripts/kingbase_query.py --allow-write --confirm --sql "DELETE FROM t WHERE id=2"
 python3 {SKILL_ROOT}/scripts/kingbase_query.py --allow-write --confirm --sql "INSERT INTO t (a,b) VALUES (1,2)"
 
-# 生成测试数据：--dry-run 预览，--confirm 执行
+# 生成测试数据SQL：--dry-run 预览，--confirm 生成SQL文件
 python3 {SKILL_ROOT}/scripts/kingbase_generate.py --count 100 --dry-run
 python3 {SKILL_ROOT}/scripts/kingbase_generate.py --count 100 --confirm
-python3 {SKILL_ROOT}/scripts/kingbase_generate.py --tables "dept:10,emp:100" --confirm
+python3 {SKILL_ROOT}/scripts/kingbase_generate.py --tables "dept:10,emp:100" --confirm --output data.sql
 ```
 
 > `--confirm` 表示「Agent 已当面获取用户授权」。**不得**在未取得用户同意的情况下自行加上此参数。
@@ -187,12 +187,14 @@ pip install -r {SKILL_ROOT}/requirements.txt -i https://mirrors.aliyun.com/pypi/
 
 本 Skill 提供**零配置自动推断**的测试数据生成能力，非技术人员只需说「每个表生成 100 条」即可。
 
+**重要：** 生成器**不直接写入数据库**，而是生成SQL文件供用户审查后手动执行，确保数据安全。
+
 ### 三种使用方式（由简到繁）
 
 | 层级 | 谁用 | 规则维护位置 | 怎么做 |
 |------|------|-------------|--------|
-| **L1 规则文件** | 非技术人员（推荐） | 项目内 `generate.rules.md` | 用中文写每张表规则，对 Agent 说「按规则生成」 |
-| **L2 对话** | 临时一次性需求 | 对话中口头说明 | 「这次只给 employee 生成 50 条」 |
+| **L1 规则文件** | 非技术人员（推荐） | 项目内 `generate.rules.md` | 用中文写每张表规则，对 Agent 说「按规则生成SQL」 |
+| **L2 对话** | 临时一次性需求 | 对话中口头说明 | 「这次只给 employee 生成 50 条SQL」 |
 | **L3 CLI / JSON** | 开发/自动化 | 命令行或 CI | `--count 100` / `--rules-json '{...}'` |
 
 **规则优先级**（冲突时）：对话临时指令 > `generate.rules.md` > 自动推断。
@@ -235,8 +237,8 @@ schema: public
 
 **使用方法**：编辑好 `generate.rules.md` 后，对 Agent 说：
 
-- 「按 generate.rules.md 生成数据」
-- 「帮我生成测试数据」
+- 「按 generate.rules.md 生成数据SQL」
+- 「帮我生成测试数据SQL」
 
 ### Agent 生成流程
 
@@ -246,9 +248,9 @@ schema: public
 4. 执行 `--dry-run`，将 JSON **翻译为中文摘要**展示：
 
    ```text
-   即将在 schema「public」生成测试数据：
+   即将生成测试数据SQL，在 schema「public」：
 
-     备份并重命名（后缀 20260811）：
+     备份计划（SQL中会包含RENAME语句，后缀 20260811）：
        · department（当前 5 行）→ department_20260811
        · employee（当前 120 行）→ employee_20260811
 
@@ -259,11 +261,15 @@ schema: public
      外键关系（自动发现）：
        · employee.dept_id → department.id
 
-   确认执行吗？
+   确认生成SQL文件吗？
    ```
 
 5. 用户确认。
-6. 执行 `--confirm`，用中文汇报备份表名与各表插入行数。
+6. 执行 `--confirm`，生成SQL文件，用中文汇报文件路径与SQL语句数量。
+7. **提醒用户**：审查SQL文件后，可使用以下命令执行：
+   ```bash
+   python3 {SKILL_ROOT}/scripts/kingbase_query.py --allow-write --confirm --file generated_data_XXXXXX.sql
+   ```
 
 ### 自动推断（未写规则的字段）
 
@@ -292,8 +298,8 @@ schema: public
 
 对话中可临时覆盖规则文件：
 
-- 「这次 department 改成 20 条」
-- 「只生成 employee 表，50 条」
+- 「这次 department 改成 20 条SQL」
+- 「只生成 employee 表的SQL，50 条」
 
 Agent 会合并规则文件和对话指令，优先采用对话中的要求。
 

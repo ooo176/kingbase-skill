@@ -2,8 +2,8 @@
 """
 人大金仓 KingbaseES 测试数据生成脚本。
 
-自动发现表结构、外键关系，推断字段生成规则，生成测试数据。
-执行前自动备份旧表（RENAME 后缀），失败时回滚。
+自动发现表结构、外键关系，推断字段生成规则，生成INSERT SQL语句。
+不直接操作数据库，生成SQL文件供用户审查后执行。
 """
 from __future__ import annotations
 
@@ -301,6 +301,20 @@ def _parse_rules_json(rules_json: str | None) -> dict[str, dict[str, dict[str, A
     return json.loads(rules_json)
 
 
+def _quote_sql_value(value: Any) -> str:
+    """将Python值转换为SQL字面量"""
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, datetime):
+        return f"'{value.strftime('%Y-%m-%d %H:%M:%S')}'"
+    # 字符串：转义单引号
+    return "'" + str(value).replace("'", "''") + "'"
+
+
 def _generate_data(
     conn: Any,
     schema: str,
@@ -310,8 +324,9 @@ def _generate_data(
     locale: str,
     dry_run: bool,
     suffix: str,
+    output_file: str | None = None,
 ) -> dict[str, Any]:
-    """生成测试数据"""
+    """生成测试数据SQL语句"""
     faker = Faker(locale)
 
     # 发现外键关系
@@ -322,6 +337,7 @@ def _generate_data(
 
     # 准备执行计划
     plan = []
+    sql_statements = []
     generated_pks: dict[str, list[Any]] = {}  # {table: [pk_values]}
 
     for table in sorted_tables:
@@ -349,17 +365,19 @@ def _generate_data(
         if dry_run:
             continue
 
-        # 备份：重命名旧表
+        # 生成备份SQL（重命名旧表）
         backup_name = f"{table}_{suffix}"
-        cur.execute(f'ALTER TABLE "{schema}"."{table}" RENAME TO "{backup_name}"')
-
-        # 创建新表
-        cur.execute(f'CREATE TABLE "{schema}"."{table}" (LIKE "{schema}"."{backup_name}" INCLUDING ALL)')
+        sql_statements.append(f'-- 备份表 {table}')
+        sql_statements.append(f'ALTER TABLE "{schema}"."{table}" RENAME TO "{backup_name}";')
+        sql_statements.append(f'CREATE TABLE "{schema}"."{table}" (LIKE "{schema}"."{backup_name}" INCLUDING ALL);')
+        sql_statements.append('')
 
         # 生成数据
         table_rules = rules.get(table, {})
         pk_column = None
         pk_values = []
+
+        sql_statements.append(f'-- 插入数据到表 {table}（{row_count} 行）')
 
         for i in range(row_count):
             row_data = {}
@@ -403,29 +421,35 @@ def _generate_data(
                 if value is not None:
                     row_data[col_name] = value
 
-                # 记录主键
+                # 记录主键（用于后续外键引用）
                 if "id" == col_name.lower() and not pk_column:
                     pk_column = col_name
                     if value is not None:
                         pk_values.append(value)
 
-            # 插入数据
+            # 生成INSERT语句
             if row_data:
                 cols = list(row_data.keys())
                 vals = [row_data[c] for c in cols]
-                placeholders = ", ".join(["%s"] * len(cols))
                 col_names = ", ".join([f'"{c}"' for c in cols])
-                cur.execute(
-                    f'INSERT INTO "{schema}"."{table}" ({col_names}) VALUES ({placeholders})',
-                    vals,
+                values_str = ", ".join([_quote_sql_value(v) for v in vals])
+                sql_statements.append(
+                    f'INSERT INTO "{schema}"."{table}" ({col_names}) VALUES ({values_str});'
                 )
 
         # 记录生成的主键值（用于外键引用）
-        if pk_column:
-            cur.execute(f'SELECT "{pk_column}" FROM "{schema}"."{table}"')
-            generated_pks[table] = [row[0] for row in cur.fetchall()]
+        if pk_column and pk_values:
+            generated_pks[table] = pk_values
 
-        conn.commit()
+        sql_statements.append('')
+
+    # 输出SQL到文件或返回
+    sql_content = "\n".join(sql_statements)
+
+    if output_file and not dry_run:
+        output_path = Path(output_file)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(sql_content, encoding="utf-8")
 
     return {
         "ok": True,
@@ -434,18 +458,22 @@ def _generate_data(
         "suffix": suffix,
         "dry_run": dry_run,
         "plan": plan,
+        "sql_file": output_file if output_file and not dry_run else None,
+        "sql_statements": len([s for s in sql_statements if s and not s.startswith("--")]),
+        "sql_preview": "\n".join(sql_statements[:50]) if dry_run else None,  # 预览前50行
     }
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="人大金仓 KingbaseES 测试数据生成")
+    p = argparse.ArgumentParser(description="人大金仓 KingbaseES 测试数据生成SQL")
     p.add_argument("--count", "-n", type=int, help="每张表的默认行数")
     p.add_argument("--schema", default=os.environ.get("KB_SCHEMA", "public"), help="目标 schema（默认 KB_SCHEMA 或 public）")
     p.add_argument("--tables", help="逗号分隔的表名或 表名:行数（如 dept:10,emp:100）")
     p.add_argument("--exclude-tables", help="逗号分隔的排除表名")
     p.add_argument("--rules-json", help="字段规则 JSON")
-    p.add_argument("--dry-run", action="store_true", help="只输出计划，不执行")
-    p.add_argument("--confirm", action="store_true", help="确认执行（必须）")
+    p.add_argument("--dry-run", action="store_true", help="只输出计划，不生成SQL")
+    p.add_argument("--confirm", action="store_true", help="确认生成SQL（必须）")
+    p.add_argument("--output", "-o", help="输出SQL文件路径（默认 generated_data_{YYYYMMDD_HHMMSS}.sql）")
     p.add_argument("--suffix", default=datetime.now().strftime("%Y%m%d"), help="备份后缀（默认 YYYYMMDD）")
     p.add_argument("--locale", default="zh_CN", help="Faker 语言（默认 zh_CN）")
     args = p.parse_args()
@@ -455,12 +483,18 @@ def main() -> None:
             json.dumps(
                 {
                     "ok": False,
-                    "error": "生成数据需要用户确认。请先 --dry-run 查看计划，确认后加 --confirm 执行。",
+                    "error": "生成SQL需要用户确认。请先 --dry-run 查看计划，确认后加 --confirm 生成SQL。",
                 },
                 ensure_ascii=False,
             )
         )
         sys.exit(1)
+
+    # 确定输出文件路径
+    output_file = args.output
+    if not args.dry_run and not output_file:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = f"generated_data_{timestamp}.sql"
 
     # 连接数据库
     connect_fn = _load_connect()
@@ -497,7 +531,7 @@ def main() -> None:
         # 解析规则
         rules = _parse_rules_json(args.rules_json)
 
-        # 生成数据
+        # 生成数据SQL
         result = _generate_data(
             conn,
             args.schema,
@@ -507,12 +541,12 @@ def main() -> None:
             args.locale,
             args.dry_run,
             args.suffix,
+            output_file,
         )
 
         print(json.dumps(result, ensure_ascii=False, default=str))
 
     except Exception as e:
-        conn.rollback()
         print(
             json.dumps(
                 {"ok": False, "error": "执行失败", "detail": str(e)},
